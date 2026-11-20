@@ -1,0 +1,1745 @@
+<roblox version="4">
+  <Item class="Lighting" referent="0">
+    <Properties>
+      <string name="Name">Lighting</string>
+      <float name="Brightness">3</float>
+      <float name="ClockTime">14</float>
+    </Properties>
+  </Item>
+  <Item class="ReplicatedStorage" referent="1">
+    <Properties>
+      <string name="Name">ReplicatedStorage</string>
+    </Properties>
+    <Item class="Folder" referent="2">
+      <Properties>
+        <string name="Name">Shared</string>
+      </Properties>
+      <Item class="ModuleScript" referent="3">
+        <Properties>
+          <string name="Name">Config</string>
+          <string name="Source"><![CDATA[--!strict
+-- Configuration du « Refuge des Bestioles ». Tout ce qu'on règle se trouve ici.
+-- Principe : explore la prairie, la forêt et la montagne, recueille des bestioles perdues,
+-- installe-les dans ton refuge. Elles te donnent des cœurs ❤ qui servent à agrandir le refuge.
+
+export type Species = {
+	id: string,
+	name: string,
+	zone: string,
+	rarity: string,
+	weight: number, -- chance d'apparition relative dans sa zone (gratuit, jamais payant)
+	hps: number, -- cœurs par seconde dans un enclos
+	color: Color3,
+	accent: Color3,
+	size: number,
+}
+
+export type Zone = {
+	id: string,
+	name: string,
+	price: number,
+	wildCount: number,
+	zMin: number,
+	zMax: number,
+	color: Color3,
+}
+
+local Config = {}
+
+Config.DataStoreName = "RefugeDesBestioles_v1"
+Config.AutosaveInterval = 60
+Config.PlotCount = 6
+Config.StartingHearts = 0
+
+-- Enclos
+Config.StartingSlots = 4
+Config.MaxSlots = 12
+function Config.SlotPrice(slotsOwned: number): number
+	return math.floor(150 * 2.1 ^ (slotsOwned - Config.StartingSlots))
+end
+
+-- Panier (combien de bestioles on porte à la fois)
+Config.NetMaxLevel = 5
+Config.BigBasketBonus = 3
+function Config.NetCapacity(level: number): number
+	return 2 + level
+end
+function Config.NetPrice(level: number): number
+	return math.floor(120 * 3.2 ^ level)
+end
+
+-- Boîte à cœurs : se remplit toute seule, plafonnée à 10 minutes de production
+Config.BoxCapSeconds = 600
+
+-- Confier une bestiole à une famille (libère l'enclos) : bonus = 2 minutes de sa production
+Config.AdoptBonusSeconds = 120
+-- Bonus de première découverte d'une espèce
+Config.DiscoveryBonusSeconds = 30
+
+Config.RarityColors = table.freeze({
+	Commune = Color3.fromRGB(235, 235, 235),
+	Rare = Color3.fromRGB(110, 190, 255),
+	["Épique"] = Color3.fromRGB(200, 120, 255),
+	["Légendaire"] = Color3.fromRGB(255, 200, 50),
+}) :: { [string]: Color3 }
+
+Config.RarityHold = table.freeze({
+	Commune = 0.3,
+	Rare = 0.7,
+	["Épique"] = 1.2,
+	["Légendaire"] = 2,
+}) :: { [string]: number }
+
+Config.Zones = table.freeze({
+	table.freeze({ id = "prairie", name = "Prairie", price = 0, wildCount = 10, zMin = 15, zMax = 120, color = Color3.fromRGB(140, 210, 110) }),
+	table.freeze({ id = "foret", name = "Forêt", price = 2500, wildCount = 8, zMin = 140, zMax = 240, color = Color3.fromRGB(70, 140, 80) }),
+	table.freeze({ id = "montagne", name = "Montagne", price = 50000, wildCount = 7, zMin = 260, zMax = 360, color = Color3.fromRGB(215, 225, 240) }),
+}) :: { Zone }
+Config.ZoneHalfWidth = 120
+
+Config.Species = table.freeze({
+	-- Prairie
+	table.freeze({ id = "lapinou", name = "Lapinou", zone = "prairie", rarity = "Commune", weight = 60, hps = 1, color = Color3.fromRGB(250, 250, 250), accent = Color3.fromRGB(255, 180, 200), size = 2.4 }),
+	table.freeze({ id = "poussin", name = "Poussin-pomme", zone = "prairie", rarity = "Commune", weight = 35, hps = 2, color = Color3.fromRGB(255, 230, 90), accent = Color3.fromRGB(230, 70, 60), size = 2.2 }),
+	table.freeze({ id = "herisson", name = "Hérisson-fraise", zone = "prairie", rarity = "Rare", weight = 5, hps = 6, color = Color3.fromRGB(240, 90, 110), accent = Color3.fromRGB(90, 200, 90), size = 2.6 }),
+	-- Forêt
+	table.freeze({ id = "renardeau", name = "Renardeau", zone = "foret", rarity = "Commune", weight = 60, hps = 12, color = Color3.fromRGB(240, 130, 50), accent = Color3.fromRGB(255, 255, 255), size = 3 }),
+	table.freeze({ id = "ecureuil", name = "Écureuil-gland", zone = "foret", rarity = "Rare", weight = 32, hps = 25, color = Color3.fromRGB(170, 100, 60), accent = Color3.fromRGB(240, 200, 120), size = 2.6 }),
+	table.freeze({ id = "cerf", name = "Faon-lune", zone = "foret", rarity = "Épique", weight = 8, hps = 70, color = Color3.fromRGB(150, 160, 230), accent = Color3.fromRGB(255, 255, 200), size = 3.6 }),
+	-- Montagne
+	table.freeze({ id = "chamois", name = "Chamois-neige", zone = "montagne", rarity = "Commune", weight = 60, hps = 150, color = Color3.fromRGB(245, 245, 255), accent = Color3.fromRGB(120, 130, 160), size = 3.2 }),
+	table.freeze({ id = "hibou", name = "Hibou-étoile", zone = "montagne", rarity = "Rare", weight = 32, hps = 320, color = Color3.fromRGB(80, 70, 140), accent = Color3.fromRGB(255, 230, 100), size = 2.8 }),
+	table.freeze({ id = "dragonnet", name = "Dragonnet-nuage", zone = "montagne", rarity = "Légendaire", weight = 8, hps = 1000, color = Color3.fromRGB(150, 230, 255), accent = Color3.fromRGB(255, 160, 220), size = 3.8 }),
+}) :: { Species }
+
+function Config.GetSpecies(id: string): Species?
+	for _, s in Config.Species do
+		if s.id == id then
+			return s
+		end
+	end
+	return nil
+end
+
+function Config.GetZone(id: string): Zone?
+	for _, z in Config.Zones do
+		if z.id == id then
+			return z
+		end
+	end
+	return nil
+end
+
+-- Monétisation : remplace les 0 par les vrais ID créés dans le Creator Dashboard.
+-- Tant qu'un ID vaut 0, le bouton correspondant n'apparaît pas. Aucun achat aléatoire.
+Config.GamePasses = table.freeze({
+	DoubleHearts = 0, -- x2 cœurs
+	BigBasket = 0, -- +3 places dans le panier
+})
+
+Config.DevProducts = table.freeze({
+	-- [ID du produit] = cœurs donnés
+	-- [123456789] = 2500,
+}) :: { [number]: number }
+
+Config.DevProductLabels = table.freeze({
+	-- [123456789] = "+2 500 ❤",
+}) :: { [number]: string }
+
+return table.freeze(Config)
+]]></string>
+        </Properties>
+      </Item>
+    </Item>
+  </Item>
+  <Item class="ServerScriptService" referent="4">
+    <Properties>
+      <string name="Name">ServerScriptService</string>
+    </Properties>
+    <Item class="Script" referent="5">
+      <Properties>
+        <string name="Name">GameServer</string>
+        <token name="RunContext">0</token>
+        <string name="Source"><![CDATA[--!strict
+-- Serveur du « Refuge des Bestioles » : zones, bestioles sauvages, panier, refuges, enclos,
+-- boîte à cœurs, bestiaire, adoption, sauvegarde, achats.
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local DataStoreService = game:GetService("DataStoreService")
+local MarketplaceService = game:GetService("MarketplaceService")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local CollectionService = game:GetService("CollectionService")
+local Lighting = game:GetService("Lighting")
+
+local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
+
+---------------------------------------------------------------------
+-- Remotes
+---------------------------------------------------------------------
+local remotes = Instance.new("Folder")
+remotes.Name = "Remotes"
+
+local function makeRemote(name: string): RemoteEvent
+	local r = Instance.new("RemoteEvent")
+	r.Name = name
+	r.Parent = remotes
+	return r
+end
+
+local UpgradeNet = makeRemote("UpgradeNet") -- client → serveur
+local Notify = makeRemote("Notify") -- serveur → client : (texte)
+local Discovered = makeRemote("Discovered") -- serveur → client : (speciesId)
+remotes.Parent = ReplicatedStorage
+
+---------------------------------------------------------------------
+-- Données joueur
+---------------------------------------------------------------------
+type PlayerData = {
+	hearts: number,
+	slots: number,
+	net: number,
+	pens: { string }, -- espèces installées (une par enclos)
+	zones: { string },
+	discovered: { string },
+	adopted: number,
+	receipts: { string },
+}
+
+local store: DataStore? = nil
+do
+	local ok, result = pcall(function()
+		return DataStoreService:GetDataStore(Config.DataStoreName)
+	end)
+	if ok then
+		store = result
+	else
+		warn("[Refuge] DataStore indisponible (active 'Enable Studio Access to API Services' pour tester la sauvegarde) :", result)
+	end
+end
+
+local sessionData: { [Player]: PlayerData } = {}
+local carried: { [Player]: { string } } = {}
+local boxHearts: { [Player]: number } = {}
+local lastRequest: { [Player]: number } = {}
+
+local function defaultData(): PlayerData
+	return {
+		hearts = Config.StartingHearts,
+		slots = Config.StartingSlots,
+		net = 0,
+		pens = {},
+		zones = { "prairie" },
+		discovered = {},
+		adopted = 0,
+		receipts = {},
+	}
+end
+
+local function num(v: any, min: number, max: number, default: number): number
+	if type(v) ~= "number" or v ~= v then
+		return default
+	end
+	return math.clamp(math.floor(v), min, max)
+end
+
+local function idList(raw: any, valid: (string) -> boolean, max: number, unique: boolean): { string }
+	local out = {}
+	if type(raw) ~= "table" then
+		return out
+	end
+	for _, id in raw do
+		if #out >= max then
+			break
+		end
+		if type(id) == "string" and valid(id) and not (unique and table.find(out, id)) then
+			table.insert(out, id)
+		end
+	end
+	return out
+end
+
+local function isSpecies(id: string): boolean
+	return Config.GetSpecies(id) ~= nil
+end
+
+local function sanitize(raw: any): PlayerData
+	local data = defaultData()
+	if type(raw) ~= "table" then
+		return data
+	end
+	data.hearts = num(raw.hearts, 0, 1e13, Config.StartingHearts)
+	data.slots = num(raw.slots, Config.StartingSlots, Config.MaxSlots, Config.StartingSlots)
+	data.net = num(raw.net, 0, Config.NetMaxLevel, 0)
+	data.adopted = num(raw.adopted, 0, 1e9, 0)
+	data.pens = idList(raw.pens, isSpecies, data.slots, false)
+	data.discovered = idList(raw.discovered, isSpecies, #Config.Species, true)
+	data.zones = idList(raw.zones, function(id)
+		return Config.GetZone(id) ~= nil
+	end, #Config.Zones, true)
+	if not table.find(data.zones, "prairie") then
+		table.insert(data.zones, 1, "prairie")
+	end
+	data.receipts = idList(raw.receipts, function()
+		return true
+	end, 50, true)
+	return data
+end
+
+local function snapshot(data: PlayerData): PlayerData
+	local copy = table.clone(data)
+	copy.pens = table.clone(data.pens)
+	copy.zones = table.clone(data.zones)
+	copy.discovered = table.clone(data.discovered)
+	copy.receipts = table.clone(data.receipts)
+	return copy
+end
+
+local function loadData(player: Player): PlayerData
+	if not store then
+		return defaultData()
+	end
+	local key = "player_" .. player.UserId
+	for attempt = 1, 3 do
+		local ok, result = pcall(function()
+			return (store :: DataStore):GetAsync(key)
+		end)
+		if ok then
+			return sanitize(result)
+		end
+		warn("[Refuge] Échec du chargement (essai " .. attempt .. ") :", result)
+		task.wait(attempt)
+	end
+	player:SetAttribute("SaveDisabled", true) -- on n'écrase pas une sauvegarde illisible
+	return defaultData()
+end
+
+local function saveData(player: Player): boolean
+	local data = sessionData[player]
+	if not store or not data or player:GetAttribute("SaveDisabled") then
+		return false
+	end
+	local copy = snapshot(data)
+	-- les cœurs encore dans la boîte sont sauvegardés avec le reste
+	copy.hearts += math.floor(boxHearts[player] or 0)
+	local ok, err = pcall(function()
+		(store :: DataStore):UpdateAsync("player_" .. player.UserId, function()
+			return copy
+		end)
+	end)
+	if not ok then
+		warn("[Refuge] Échec de la sauvegarde :", err)
+	end
+	return ok
+end
+
+---------------------------------------------------------------------
+-- Calculs et synchronisation
+---------------------------------------------------------------------
+local function heartsPerSecond(player: Player, data: PlayerData): number
+	local total = 0
+	for _, id in data.pens do
+		local s = Config.GetSpecies(id)
+		if s then
+			total += s.hps
+		end
+	end
+	if player:GetAttribute("DoubleHearts") then
+		total *= 2
+	end
+	return total
+end
+
+local function capacity(player: Player, data: PlayerData): number
+	return Config.NetCapacity(data.net) + (if player:GetAttribute("BigBasket") then Config.BigBasketBonus else 0)
+end
+
+local function syncPlayer(player: Player)
+	local data = sessionData[player]
+	if not data then
+		return
+	end
+	local leaderstats = player:FindFirstChild("leaderstats")
+	if leaderstats then
+		local h = leaderstats:FindFirstChild("Cœurs")
+		if h and h:IsA("IntValue") then
+			h.Value = math.min(data.hearts, 2 ^ 31 - 1)
+		end
+		local b = leaderstats:FindFirstChild("Bestioles")
+		if b and b:IsA("IntValue") then
+			b.Value = #data.pens
+		end
+	end
+	player:SetAttribute("Hearts", data.hearts)
+	player:SetAttribute("HPS", heartsPerSecond(player, data))
+	player:SetAttribute("Net", data.net)
+	player:SetAttribute("Capacity", capacity(player, data))
+	player:SetAttribute("Carried", #(carried[player] or {}))
+	player:SetAttribute("PenCount", #data.pens)
+	player:SetAttribute("Slots", data.slots)
+	player:SetAttribute("Zones", table.concat(data.zones, ","))
+	player:SetAttribute("Discovered", table.concat(data.discovered, ","))
+	player:SetAttribute("Box", math.floor(boxHearts[player] or 0))
+end
+
+---------------------------------------------------------------------
+-- Pass de jeu
+---------------------------------------------------------------------
+local function ownsPass(player: Player, passId: number): boolean
+	if passId == 0 then
+		return false
+	end
+	local ok, owns = pcall(function()
+		return MarketplaceService:UserOwnsGamePassAsync(player.UserId, passId)
+	end)
+	return ok and owns == true
+end
+
+local function refreshPasses(player: Player)
+	player:SetAttribute("DoubleHearts", ownsPass(player, Config.GamePasses.DoubleHearts))
+	player:SetAttribute("BigBasket", ownsPass(player, Config.GamePasses.BigBasket))
+	syncPlayer(player)
+end
+
+MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(player: Player, passId: number, purchased: boolean)
+	if not purchased then
+		return
+	end
+	if passId == Config.GamePasses.DoubleHearts then
+		player:SetAttribute("DoubleHearts", true)
+		Notify:FireClient(player, "Merci ! Tes bestioles donnent x2 cœurs 💞")
+	elseif passId == Config.GamePasses.BigBasket then
+		player:SetAttribute("BigBasket", true)
+		Notify:FireClient(player, "Merci ! Ton panier a +" .. Config.BigBasketBonus .. " places 🧺")
+	end
+	syncPlayer(player)
+end)
+
+---------------------------------------------------------------------
+-- Produits (achats répétables) : accordés une seule fois, après sauvegarde
+---------------------------------------------------------------------
+MarketplaceService.ProcessReceipt = function(receipt)
+	local player = Players:GetPlayerByUserId(receipt.PlayerId)
+	local data = player and sessionData[player]
+	local amount = Config.DevProducts[receipt.ProductId]
+	if not player or not data or not amount then
+		return Enum.ProductPurchaseDecision.NotProcessedYet
+	end
+	local purchaseId = tostring(receipt.PurchaseId)
+	if table.find(data.receipts, purchaseId) then
+		return Enum.ProductPurchaseDecision.PurchaseGranted
+	end
+	data.hearts += amount
+	table.insert(data.receipts, purchaseId)
+	if #data.receipts > 50 then
+		table.remove(data.receipts, 1)
+	end
+	if store and not player:GetAttribute("SaveDisabled") and not saveData(player) then
+		data.hearts -= amount
+		local i = table.find(data.receipts, purchaseId)
+		if i then
+			table.remove(data.receipts, i)
+		end
+		return Enum.ProductPurchaseDecision.NotProcessedYet
+	end
+	syncPlayer(player)
+	Notify:FireClient(player, "+" .. amount .. " ❤ ! Merci 🙏")
+	return Enum.ProductPurchaseDecision.PurchaseGranted
+end
+
+---------------------------------------------------------------------
+-- Outils de construction
+---------------------------------------------------------------------
+local function part(props: { [string]: any }): Part
+	local p = Instance.new("Part")
+	p.Anchored = true
+	p.TopSurface = Enum.SurfaceType.Smooth
+	p.BottomSurface = Enum.SurfaceType.Smooth
+	for k, v in props do
+		(p :: any)[k] = v
+	end
+	return p
+end
+
+local function billboard(parent: Instance, text: string, color: Color3, height: number, width: number): TextLabel
+	local gui = Instance.new("BillboardGui")
+	gui.Size = UDim2.fromOffset(width, 40)
+	gui.StudsOffsetWorldSpace = Vector3.new(0, height, 0)
+	gui.MaxDistance = 70
+	local t = Instance.new("TextLabel")
+	t.Size = UDim2.fromScale(1, 1)
+	t.BackgroundTransparency = 1
+	t.TextScaled = true
+	t.Font = Enum.Font.FredokaOne
+	t.TextColor3 = color
+	t.TextStrokeTransparency = 0.2
+	t.Text = text
+	t.Parent = gui
+	gui.Parent = parent
+	return t
+end
+
+local function surfaceText(target: BasePart, face: Enum.NormalId, text: string, color: Color3): TextLabel
+	local gui = Instance.new("SurfaceGui")
+	gui.Face = face
+	gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+	gui.PixelsPerStud = 30
+	local t = Instance.new("TextLabel")
+	t.Size = UDim2.fromScale(1, 1)
+	t.BackgroundTransparency = 1
+	t.TextScaled = true
+	t.Font = Enum.Font.FredokaOne
+	t.TextColor3 = color
+	t.Text = text
+	t.Parent = gui
+	gui.Parent = target
+	return t
+end
+
+-- Modèle d'une bestiole : corps rond, oreilles, yeux, aura selon la rareté
+local function makeCritter(species: Config.Species, cf: CFrame): (Model, BasePart)
+	local model = Instance.new("Model")
+	model.Name = species.name
+	local s = species.size
+	local body = part({
+		Name = "Corps",
+		Shape = Enum.PartType.Ball,
+		Size = Vector3.new(s, s, s),
+		CFrame = cf,
+		Color = species.color,
+		Material = Enum.Material.SmoothPlastic,
+		CanCollide = false,
+	})
+	body.Parent = model
+	local function attach(name: string, size: Vector3, offset: Vector3, color: Color3)
+		local p = part({
+			Name = name,
+			Shape = Enum.PartType.Ball,
+			Size = size,
+			CFrame = cf * CFrame.new(offset),
+			Color = color,
+			Material = Enum.Material.SmoothPlastic,
+			Anchored = false,
+			CanCollide = false,
+			CanQuery = false,
+			CanTouch = false,
+			Massless = true,
+		})
+		local weld = Instance.new("WeldConstraint")
+		weld.Part0 = body
+		weld.Part1 = p
+		weld.Parent = p
+		p.Parent = model
+	end
+	attach("OreilleG", Vector3.new(s * 0.3, s * 0.55, s * 0.3), Vector3.new(-s * 0.25, s * 0.5, 0), species.accent)
+	attach("OreilleD", Vector3.new(s * 0.3, s * 0.55, s * 0.3), Vector3.new(s * 0.25, s * 0.5, 0), species.accent)
+	attach("OeilG", Vector3.new(s * 0.16, s * 0.16, s * 0.16), Vector3.new(-s * 0.18, s * 0.1, -s * 0.44), Color3.fromRGB(30, 30, 40))
+	attach("OeilD", Vector3.new(s * 0.16, s * 0.16, s * 0.16), Vector3.new(s * 0.18, s * 0.1, -s * 0.44), Color3.fromRGB(30, 30, 40))
+	attach("Nez", Vector3.new(s * 0.12, s * 0.12, s * 0.12), Vector3.new(0, -s * 0.05, -s * 0.5), species.accent)
+	if species.rarity ~= "Commune" then
+		local light = Instance.new("PointLight")
+		light.Color = Config.RarityColors[species.rarity]
+		light.Range = 8
+		light.Brightness = 1.5
+		light.Parent = body
+	end
+	if species.rarity == "Épique" or species.rarity == "Légendaire" then
+		local sparkles = Instance.new("Sparkles")
+		sparkles.SparkleColor = Config.RarityColors[species.rarity]
+		sparkles.Parent = body
+	end
+	model.PrimaryPart = body
+	return model, body
+end
+
+---------------------------------------------------------------------
+-- Carte : place centrale, zones, portails
+---------------------------------------------------------------------
+local map = Instance.new("Folder")
+map.Name = "Monde"
+
+local ground = part({
+	Name = "Sol",
+	Size = Vector3.new(420, 2, 520),
+	Position = Vector3.new(0, -1, 140),
+	Color = Color3.fromRGB(165, 215, 135),
+	Material = Enum.Material.Grass,
+})
+ground.Parent = map
+
+local rng = Random.new()
+local W = Config.ZoneHalfWidth
+
+-- Murs invisibles autour des zones
+for _, w in
+	{
+		{ size = Vector3.new(2, 40, 360), pos = Vector3.new(-W - 1, 20, 190) },
+		{ size = Vector3.new(2, 40, 360), pos = Vector3.new(W + 1, 20, 190) },
+		{ size = Vector3.new(2 * W + 4, 40, 2), pos = Vector3.new(0, 20, 371) },
+	}
+do
+	part({ Name = "Limite", Size = w.size, Position = w.pos, Transparency = 1 }).Parent = map
+end
+
+local gatesFolder = Instance.new("Folder")
+gatesFolder.Name = "Portails"
+gatesFolder.Parent = map
+
+local zoneDecor: { [string]: () -> Vector3 } = {}
+for index, zone in Config.Zones do
+	local depth = zone.zMax - zone.zMin
+	local floor = part({
+		Name = "Zone_" .. zone.id,
+		Size = Vector3.new(2 * W, 0.4, depth + 20),
+		Position = Vector3.new(0, 0.2, (zone.zMin + zone.zMax) / 2),
+		Color = zone.color,
+		Material = if zone.id == "montagne" then Enum.Material.Snow else Enum.Material.Grass,
+		CanQuery = false,
+	})
+	floor.Parent = map
+	zoneDecor[zone.id] = function()
+		return Vector3.new(rng:NextNumber(-W + 8, W - 8), 0.4, rng:NextNumber(zone.zMin + 5, zone.zMax - 5))
+	end
+	-- Décor : fleurs, sapins ou rochers
+	for _ = 1, 26 do
+		local p = zoneDecor[zone.id]()
+		if zone.id == "prairie" then
+			local flower = part({
+				Name = "Fleur",
+				Shape = Enum.PartType.Ball,
+				Size = Vector3.new(1.4, 1.4, 1.4),
+				Position = p + Vector3.new(0, 0.6, 0),
+				Color = Color3.fromHSV(rng:NextNumber(), 0.5, 1),
+				CanCollide = false,
+				CanQuery = false,
+			})
+			flower.Parent = map
+		elseif zone.id == "foret" then
+			local trunk = part({ Name = "Tronc", Size = Vector3.new(2, 8, 2), Position = p + Vector3.new(0, 4, 0), Color = Color3.fromRGB(110, 75, 45), Material = Enum.Material.Wood })
+			trunk.Parent = map
+			local leaves = part({
+				Name = "Feuillage",
+				Shape = Enum.PartType.Ball,
+				Size = Vector3.new(10, 10, 10),
+				Position = p + Vector3.new(0, 11, 0),
+				Color = Color3.fromRGB(50, 120 + rng:NextInteger(0, 40), 60),
+				Material = Enum.Material.Grass,
+				CanCollide = false,
+			})
+			leaves.Parent = map
+		else
+			local rock = part({
+				Name = "Rocher",
+				Size = Vector3.new(rng:NextNumber(4, 9), rng:NextNumber(3, 7), rng:NextNumber(4, 9)),
+				Position = p + Vector3.new(0, 1.5, 0),
+				Color = Color3.fromRGB(150, 155, 170),
+				Material = Enum.Material.Slate,
+				Orientation = Vector3.new(0, rng:NextNumber(0, 360), 0),
+			})
+			rock.Parent = map
+		end
+	end
+	-- Portail (sauf la prairie, ouverte à tous)
+	if zone.price > 0 then
+		local gate = part({
+			Name = zone.id,
+			Size = Vector3.new(2 * W, 24, 2),
+			Position = Vector3.new(0, 12, zone.zMin - 10),
+			Color = Color3.fromRGB(255, 190, 220),
+			Material = Enum.Material.ForceField,
+			Transparency = 0.3,
+		})
+		gate.Parent = gatesFolder
+		local sign = part({
+			Name = "Panneau_" .. zone.id,
+			Size = Vector3.new(14, 5, 1),
+			Position = Vector3.new(0, 4, zone.zMin - 13),
+			Color = Color3.fromRGB(255, 250, 240),
+			Material = Enum.Material.SmoothPlastic,
+		})
+		surfaceText(sign, Enum.NormalId.Front, "🔒 " .. zone.name .. "\n" .. zone.price .. " ❤", Color3.fromRGB(150, 60, 110))
+		local prompt = Instance.new("ProximityPrompt")
+		prompt.ActionText = "Ouvrir (" .. zone.price .. " ❤)"
+		prompt.ObjectText = zone.name
+		prompt.HoldDuration = 0.4
+		prompt.MaxActivationDistance = 12
+		prompt.RequiresLineOfSight = false
+		prompt.Parent = sign
+		sign.Parent = map
+		prompt.Triggered:Connect(function(player)
+			local data = sessionData[player]
+			if not data then
+				return
+			end
+			if table.find(data.zones, zone.id) then
+				Notify:FireClient(player, zone.name .. " est déjà ouverte pour toi 🙂")
+				return
+			end
+			-- il faut avoir ouvert la zone précédente
+			local previous = Config.Zones[index - 1]
+			if previous and not table.find(data.zones, previous.id) then
+				Notify:FireClient(player, "Ouvre d'abord : " .. previous.name)
+				return
+			end
+			if data.hearts < zone.price then
+				Notify:FireClient(player, "Il te manque " .. (zone.price - data.hearts) .. " ❤")
+				return
+			end
+			data.hearts -= zone.price
+			table.insert(data.zones, zone.id)
+			syncPlayer(player)
+			Notify:FireClient(player, zone.name .. " ouverte ! De nouvelles bestioles t'attendent 🌲")
+		end)
+	end
+end
+
+-- Lumière douce
+Lighting.ClockTime = 16
+do
+	local atmo = Instance.new("Atmosphere")
+	atmo.Density = 0.2
+	atmo.Haze = 0.8
+	atmo.Color = Color3.fromRGB(255, 235, 220)
+	atmo.Parent = Lighting
+end
+
+map.Parent = workspace
+
+---------------------------------------------------------------------
+-- Bestioles sauvages
+---------------------------------------------------------------------
+local wildFolder = Instance.new("Folder")
+wildFolder.Name = "BestiolesSauvages"
+wildFolder.Parent = workspace
+
+local function pickSpecies(zoneId: string): Config.Species
+	local pool = {}
+	local total = 0
+	for _, s in Config.Species do
+		if s.zone == zoneId then
+			table.insert(pool, s)
+			total += s.weight
+		end
+	end
+	local roll = rng:NextNumber(0, total)
+	for _, s in pool do
+		roll -= s.weight
+		if roll <= 0 then
+			return s
+		end
+	end
+	return pool[1]
+end
+
+local spawnWild: (zone: Config.Zone) -> ()
+
+local function catchCritter(player: Player, zone: Config.Zone, species: Config.Species, model: Model): boolean
+	local data = sessionData[player]
+	if not data or model.Parent == nil then
+		return false
+	end
+	if not table.find(data.zones, zone.id) then
+		Notify:FireClient(player, "Ouvre d'abord la zone : " .. zone.name)
+		return false
+	end
+	local bag = carried[player]
+	if #bag >= capacity(player, data) then
+		Notify:FireClient(player, "Panier plein ! Ramène tes bestioles au refuge 🧺")
+		return false
+	end
+	table.insert(bag, species.id)
+	model:Destroy()
+	syncPlayer(player)
+	Notify:FireClient(player, species.name .. " (" .. species.rarity .. ") dans ton panier ! " .. #bag .. "/" .. capacity(player, data))
+	task.delay(3, spawnWild, zone)
+	return true
+end
+
+spawnWild = function(zone: Config.Zone)
+	local species = pickSpecies(zone.id)
+	local start = zoneDecor[zone.id]() + Vector3.new(0, species.size / 2 + 0.2, 0)
+	local model, body = makeCritter(species, CFrame.new(start))
+	CollectionService:AddTag(model, "Sauvage")
+	billboard(body, species.name, Config.RarityColors[species.rarity], species.size + 1.5, 140)
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.ActionText = "Recueillir"
+	prompt.ObjectText = species.name .. " · " .. species.rarity
+	prompt.HoldDuration = Config.RarityHold[species.rarity] or 0.5
+	prompt.MaxActivationDistance = 10
+	prompt.RequiresLineOfSight = false
+	prompt.Parent = body
+	model.Parent = wildFolder
+	prompt.Triggered:Connect(function(player)
+		catchCritter(player, zone, species, model)
+	end)
+	-- Balade : la bestiole se promène doucement dans sa zone
+	task.spawn(function()
+		while model.Parent do
+			task.wait(rng:NextNumber(1.5, 4))
+			if not model.Parent then
+				break
+			end
+			local here = body.Position
+			local target = Vector3.new(
+				math.clamp(here.X + rng:NextNumber(-18, 18), -W + 6, W - 6),
+				here.Y,
+				math.clamp(here.Z + rng:NextNumber(-18, 18), zone.zMin + 3, zone.zMax - 3)
+			)
+			local distance = (target - here).Magnitude
+			if distance > 1 then
+				local tween = TweenService:Create(body, TweenInfo.new(distance / 7, Enum.EasingStyle.Sine), {
+					CFrame = CFrame.lookAt(target, target + (target - here).Unit),
+				})
+				body.CFrame = CFrame.lookAt(here, here + (target - here).Unit)
+				tween:Play()
+				tween.Completed:Wait()
+			end
+		end
+	end)
+end
+
+for _, zone in Config.Zones do
+	for _ = 1, zone.wildCount do
+		spawnWild(zone)
+	end
+end
+
+---------------------------------------------------------------------
+-- Refuges (un par joueur)
+---------------------------------------------------------------------
+type Slot = { part: BasePart, prompt: ProximityPrompt, index: number, model: Model? }
+type Plot = {
+	index: number,
+	owner: Player?,
+	spawnCFrame: CFrame,
+	sign: TextLabel,
+	boxLabel: TextLabel,
+	slots: { Slot },
+}
+
+local plots: { Plot } = {}
+local playerPlot: { [Player]: Plot } = {}
+local refugeFolder = Instance.new("Folder")
+refugeFolder.Name = "Refuges"
+
+local PLOT = 44
+local SLOT = 8
+local SLOT_GAP = 2
+
+local function refreshSlot(plot: Plot, slot: Slot)
+	local owner = plot.owner
+	local data = owner and sessionData[owner]
+	if slot.model then
+		slot.model:Destroy()
+		slot.model = nil
+	end
+	local prompt = slot.prompt
+	if not owner or not data then
+		prompt.Enabled = false
+		slot.part.Transparency = 0.6
+		return
+	end
+	if slot.index > data.slots then
+		slot.part.Transparency = 0.6
+		prompt.Enabled = slot.index == data.slots + 1
+		prompt.HoldDuration = 0
+		prompt.ActionText = "Agrandir (" .. Config.SlotPrice(data.slots) .. " ❤)"
+		prompt.ObjectText = "Nouvel enclos"
+		return
+	end
+	slot.part.Transparency = 0
+	local id = data.pens[slot.index]
+	local species = id and Config.GetSpecies(id)
+	if not species then
+		prompt.Enabled = false
+		return
+	end
+	local cf = CFrame.new(slot.part.Position + Vector3.new(0, 0.3 + species.size / 2, 0)) * CFrame.Angles(0, math.pi, 0)
+	local model, body = makeCritter(species, cf)
+	body:SetAttribute("BaseCFrame", cf)
+	billboard(body, "+" .. species.hps .. " ❤/s", Color3.fromRGB(255, 120, 160), species.size + 1.2, 110)
+	CollectionService:AddTag(body, "Pensionnaire")
+	model.Parent = slot.part
+	slot.model = model
+	prompt.Enabled = true
+	prompt.HoldDuration = 1.2
+	prompt.ActionText = "Confier à une famille (+" .. species.hps * Config.AdoptBonusSeconds .. " ❤)"
+	prompt.ObjectText = species.name
+end
+
+local function refreshPlot(plot: Plot)
+	for _, slot in plot.slots do
+		refreshSlot(plot, slot)
+	end
+end
+
+local function onSlotTriggered(plot: Plot, slot: Slot, player: Player)
+	local data = sessionData[player]
+	if plot.owner ~= player or not data then
+		Notify:FireClient(player, "Ce n'est pas ton refuge 🙂")
+		return
+	end
+	if slot.index > data.slots then
+		if slot.index ~= data.slots + 1 then
+			return
+		end
+		local price = Config.SlotPrice(data.slots)
+		if data.hearts < price then
+			Notify:FireClient(player, "Il te manque " .. (price - data.hearts) .. " ❤")
+			return
+		end
+		data.hearts -= price
+		data.slots += 1
+		syncPlayer(player)
+		refreshPlot(plot)
+		Notify:FireClient(player, "Nouvel enclos ! 🏡")
+		return
+	end
+	local id = data.pens[slot.index]
+	local species = id and Config.GetSpecies(id)
+	if not species then
+		return
+	end
+	-- Adoption : la bestiole part dans une famille, l'enclos est libéré
+	table.remove(data.pens, slot.index)
+	local bonus = species.hps * Config.AdoptBonusSeconds
+	data.hearts += bonus
+	data.adopted += 1
+	syncPlayer(player)
+	refreshPlot(plot)
+	Notify:FireClient(player, species.name .. " a trouvé une famille ! +" .. bonus .. " ❤ 💌")
+end
+
+local function deposit(plot: Plot, player: Player)
+	local data = sessionData[player]
+	if plot.owner ~= player or not data then
+		Notify:FireClient(player, "Ce n'est pas ton refuge 🙂")
+		return
+	end
+	local bag = carried[player]
+	if #bag == 0 then
+		Notify:FireClient(player, "Ton panier est vide : va recueillir des bestioles dans la prairie 🌼")
+		return
+	end
+	local placed = 0
+	while #bag > 0 and #data.pens < data.slots do
+		local id = table.remove(bag, 1) :: string
+		table.insert(data.pens, id)
+		placed += 1
+		if not table.find(data.discovered, id) then
+			table.insert(data.discovered, id)
+			local s = Config.GetSpecies(id)
+			if s then
+				local bonus = s.hps * Config.DiscoveryBonusSeconds
+				data.hearts += bonus
+				Discovered:FireClient(player, id)
+				Notify:FireClient(player, "Nouvelle espèce : " .. s.name .. " ! +" .. bonus .. " ❤ 📖")
+			end
+		end
+	end
+	syncPlayer(player)
+	refreshPlot(plot)
+	if #bag > 0 then
+		Notify:FireClient(player, placed .. " installée(s). Refuge plein : agrandis-le ou confie une bestiole à une famille")
+	elseif placed > 0 then
+		Notify:FireClient(player, placed .. " bestiole(s) installée(s) ! Elles produisent des ❤")
+	end
+end
+
+local function collect(plot: Plot, player: Player)
+	local data = sessionData[player]
+	if plot.owner ~= player or not data then
+		Notify:FireClient(player, "Ce n'est pas ton refuge 🙂")
+		return
+	end
+	local amount = math.floor(boxHearts[player] or 0)
+	if amount <= 0 then
+		Notify:FireClient(player, "La boîte est vide : installe des bestioles !")
+		return
+	end
+	boxHearts[player] = (boxHearts[player] or 0) - amount
+	data.hearts += amount
+	syncPlayer(player)
+	Notify:FireClient(player, "+" .. amount .. " ❤")
+end
+
+local function newPrompt(parent: Instance, action: string, object: string): ProximityPrompt
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.ActionText = action
+	prompt.ObjectText = object
+	prompt.HoldDuration = 0
+	prompt.MaxActivationDistance = 10
+	prompt.RequiresLineOfSight = false
+	prompt.Parent = parent
+	return prompt
+end
+
+local function buildPlot(index: number, origin: Vector3): Plot
+	local folder = Instance.new("Model")
+	folder.Name = "Refuge" .. index
+
+	local base = part({
+		Name = "Base",
+		Size = Vector3.new(PLOT, 1, PLOT),
+		Position = origin,
+		Color = Color3.fromRGB(205, 235, 175),
+		Material = Enum.Material.Grass,
+	})
+	base.Parent = folder
+
+	-- Haie basse sur 3 côtés (l'avant est ouvert vers la place centrale)
+	local sides: { { offset: Vector3, alongX: boolean } } = {
+		{ offset = Vector3.new(0, 0, -1), alongX = true },
+		{ offset = Vector3.new(1, 0, 0), alongX = false },
+		{ offset = Vector3.new(-1, 0, 0), alongX = false },
+	}
+	for _, side in sides do
+		local offset = side.offset
+		local alongX = side.alongX
+		local hedge = part({
+			Name = "Haie",
+			Size = if alongX then Vector3.new(PLOT, 3, 1.5) else Vector3.new(1.5, 3, PLOT),
+			Position = origin + offset * (PLOT / 2) + Vector3.new(0, 2, 0),
+			Color = Color3.fromRGB(80, 160, 80),
+			Material = Enum.Material.Grass,
+		})
+		hedge.Parent = folder
+	end
+
+	-- Panneau du propriétaire, au fond
+	local signPart = part({
+		Name = "Panneau",
+		Size = Vector3.new(16, 5, 0.6),
+		Position = origin + Vector3.new(0, 6, -PLOT / 2 + 1),
+		Color = Color3.fromRGB(255, 235, 245),
+		Material = Enum.Material.SmoothPlastic,
+	})
+	signPart.Parent = folder
+	local sign = surfaceText(signPart, Enum.NormalId.Back, "Refuge libre", Color3.fromRGB(170, 70, 120))
+
+	-- Accueil (on dépose le panier) et boîte à cœurs, à l'avant
+	local accueil = part({
+		Name = "Accueil",
+		Size = Vector3.new(8, 1, 6),
+		Position = origin + Vector3.new(-8, 0.9, PLOT / 2 - 5),
+		Color = Color3.fromRGB(255, 200, 120),
+		Material = Enum.Material.Wood,
+	})
+	accueil.Parent = folder
+	billboard(accueil, "🧺 Accueil", Color3.fromRGB(255, 255, 255), 3, 140)
+	local box = part({
+		Name = "BoiteACoeurs",
+		Size = Vector3.new(4, 4, 4),
+		Position = origin + Vector3.new(8, 2.5, PLOT / 2 - 5),
+		Color = Color3.fromRGB(255, 120, 170),
+		Material = Enum.Material.SmoothPlastic,
+	})
+	box.Parent = folder
+	local boxLabel = billboard(box, "❤ 0", Color3.fromRGB(255, 255, 255), 4, 140)
+
+	local plot: Plot = {
+		index = index,
+		owner = nil,
+		spawnCFrame = CFrame.lookAt(origin + Vector3.new(0, 4, PLOT / 2 - 12), origin + Vector3.new(0, 4, PLOT)),
+		sign = sign,
+		boxLabel = boxLabel,
+		slots = {},
+	}
+
+	newPrompt(accueil, "Installer les bestioles", "Accueil").Triggered:Connect(function(player)
+		deposit(plot, player)
+	end)
+	newPrompt(box, "Collecter", "Boîte à cœurs").Triggered:Connect(function(player)
+		collect(plot, player)
+	end)
+
+	-- 12 enclos : 4 colonnes x 3 rangées
+	local cols = 4
+	local span = cols * SLOT + (cols - 1) * SLOT_GAP
+	for i = 1, Config.MaxSlots do
+		local col = (i - 1) % cols
+		local row = (i - 1) // cols
+		local slotPart = part({
+			Name = "Enclos" .. i,
+			Size = Vector3.new(SLOT, 0.4, SLOT),
+			Position = origin + Vector3.new(-span / 2 + SLOT / 2 + col * (SLOT + SLOT_GAP), 0.7, 6 - row * (SLOT + SLOT_GAP)),
+			Color = Color3.fromRGB(240, 220, 170),
+			Material = Enum.Material.Sand,
+		})
+		local prompt = newPrompt(slotPart, "", "")
+		prompt.MaxActivationDistance = 8
+		slotPart.Parent = folder
+		local slot: Slot = { part = slotPart, prompt = prompt, index = i, model = nil }
+		table.insert(plot.slots, slot)
+		prompt.Triggered:Connect(function(player)
+			onSlotTriggered(plot, slot, player)
+		end)
+	end
+
+	folder.Parent = refugeFolder
+	return plot
+end
+
+for i = 1, Config.PlotCount do
+	local x = (i - (Config.PlotCount + 1) / 2) * (PLOT + 14)
+	table.insert(plots, buildPlot(i, Vector3.new(x, 0.5, -60)))
+end
+refugeFolder.Parent = workspace
+
+---------------------------------------------------------------------
+-- Arrivée / départ des joueurs
+---------------------------------------------------------------------
+local function assignPlot(player: Player): Plot?
+	for _, plot in plots do
+		if not plot.owner then
+			plot.owner = player
+			plot.sign.Text = "Refuge de " .. player.DisplayName
+			playerPlot[player] = plot
+			player:SetAttribute("PlotIndex", plot.index)
+			return plot
+		end
+	end
+	return nil
+end
+
+local function freePlot(player: Player)
+	local plot = playerPlot[player]
+	if not plot then
+		return
+	end
+	plot.owner = nil
+	plot.sign.Text = "Refuge libre"
+	plot.boxLabel.Text = "❤ 0"
+	playerPlot[player] = nil
+	refreshPlot(plot)
+end
+
+local function onCharacterAdded(player: Player, character: Model)
+	local plot = playerPlot[player]
+	if plot then
+		task.spawn(function()
+			character:WaitForChild("HumanoidRootPart", 5)
+			task.wait(0.1)
+			if character.Parent then
+				character:PivotTo(plot.spawnCFrame)
+			end
+		end)
+	end
+end
+
+local function onPlayerAdded(player: Player)
+	local leaderstats = Instance.new("Folder")
+	leaderstats.Name = "leaderstats"
+	local h = Instance.new("IntValue")
+	h.Name = "Cœurs"
+	h.Parent = leaderstats
+	local b = Instance.new("IntValue")
+	b.Name = "Bestioles"
+	b.Parent = leaderstats
+	leaderstats.Parent = player
+
+	local data = loadData(player)
+	if player.Parent == nil then
+		return
+	end
+	sessionData[player] = data
+	carried[player] = {}
+	boxHearts[player] = 0
+	syncPlayer(player)
+	task.spawn(refreshPasses, player)
+
+	local plot = assignPlot(player)
+	if not plot then
+		player:Kick("Serveur plein, réessaie dans un autre serveur !")
+		return
+	end
+	refreshPlot(plot)
+
+	player.CharacterAdded:Connect(function(character)
+		onCharacterAdded(player, character)
+	end)
+	if player.Character then
+		onCharacterAdded(player, player.Character)
+	end
+end
+
+local function onPlayerRemoving(player: Player)
+	saveData(player)
+	freePlot(player)
+	sessionData[player] = nil
+	carried[player] = nil
+	boxHearts[player] = nil
+	lastRequest[player] = nil
+end
+
+Players.PlayerAdded:Connect(onPlayerAdded)
+Players.PlayerRemoving:Connect(onPlayerRemoving)
+for _, player in Players:GetPlayers() do
+	task.spawn(onPlayerAdded, player)
+end
+
+game:BindToClose(function()
+	if RunService:IsStudio() and not store then
+		return
+	end
+	local pending = 0
+	for _, player in Players:GetPlayers() do
+		pending += 1
+		task.spawn(function()
+			saveData(player)
+			pending -= 1
+		end)
+	end
+	local started = os.clock()
+	while pending > 0 and os.clock() - started < 25 do
+		task.wait(0.2)
+	end
+end)
+
+task.spawn(function()
+	while true do
+		task.wait(Config.AutosaveInterval)
+		for _, player in Players:GetPlayers() do
+			task.spawn(saveData, player)
+		end
+	end
+end)
+
+---------------------------------------------------------------------
+-- Production de cœurs (chaque seconde, dans la boîte du refuge)
+---------------------------------------------------------------------
+task.spawn(function()
+	while true do
+		task.wait(1)
+		for player, data in sessionData do
+			local hps = heartsPerSecond(player, data)
+			if hps > 0 then
+				local cap = hps * Config.BoxCapSeconds
+				boxHearts[player] = math.min((boxHearts[player] or 0) + hps, cap)
+				local amount = math.floor(boxHearts[player])
+				player:SetAttribute("Box", amount)
+				local plot = playerPlot[player]
+				if plot then
+					plot.boxLabel.Text = "❤ " .. amount .. (if amount >= cap then " (pleine)" else "")
+				end
+			end
+		end
+	end
+end)
+
+---------------------------------------------------------------------
+-- Remotes client → serveur (tout est vérifié ici)
+---------------------------------------------------------------------
+UpgradeNet.OnServerEvent:Connect(function(player: Player)
+	local data = sessionData[player]
+	local now = os.clock()
+	if not data or now - (lastRequest[player] or 0) < 0.3 then
+		return
+	end
+	lastRequest[player] = now
+	if data.net >= Config.NetMaxLevel then
+		Notify:FireClient(player, "Panier au niveau maximum ! 🧺")
+		return
+	end
+	local price = Config.NetPrice(data.net)
+	if data.hearts < price then
+		Notify:FireClient(player, "Il te manque " .. (price - data.hearts) .. " ❤")
+		return
+	end
+	data.hearts -= price
+	data.net += 1
+	syncPlayer(player)
+	Notify:FireClient(player, "Panier agrandi : " .. capacity(player, data) .. " places 🧺")
+end)
+]]></string>
+      </Properties>
+    </Item>
+  </Item>
+  <Item class="StarterPlayer" referent="6">
+    <Properties>
+      <string name="Name">StarterPlayer</string>
+    </Properties>
+    <Item class="StarterPlayerScripts" referent="7">
+      <Properties>
+        <string name="Name">StarterPlayerScripts</string>
+      </Properties>
+      <Item class="LocalScript" referent="8">
+        <Properties>
+          <string name="Name">Interface</string>
+          <string name="Source"><![CDATA[--!strict
+-- Interface du « Refuge des Bestioles » : cœurs, panier, guide des premières minutes,
+-- fil lumineux vers l'accueil, bestiaire, portails ouverts, boutique, notifications.
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local MarketplaceService = game:GetService("MarketplaceService")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local CollectionService = game:GetService("CollectionService")
+
+local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
+local remotes = ReplicatedStorage:WaitForChild("Remotes")
+local UpgradeNet = remotes:WaitForChild("UpgradeNet") :: RemoteEvent
+local Notify = remotes:WaitForChild("Notify") :: RemoteEvent
+local Discovered = remotes:WaitForChild("Discovered") :: RemoteEvent
+
+local player = Players.LocalPlayer
+local FONT = Enum.Font.FredokaOne
+local PINK = Color3.fromRGB(255, 120, 170)
+local CREAM = Color3.fromRGB(255, 250, 240)
+local INK = Color3.fromRGB(90, 45, 70)
+
+local function corner(parent: Instance, radius: number)
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, radius)
+	c.Parent = parent
+end
+
+local function stroke(parent: Instance)
+	local s = Instance.new("UIStroke")
+	s.Thickness = 3
+	s.Color = INK
+	s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	s.Parent = parent
+end
+
+local function formatNumber(n: number): string
+	local s = tostring(math.floor(n))
+	local out = s:reverse():gsub("(%d%d%d)", "%1 "):reverse()
+	return (out:gsub("^ ", ""))
+end
+
+local function attr(name: string): number
+	return (player:GetAttribute(name) :: number?) or 0
+end
+
+local function csv(name: string): { [string]: boolean }
+	local set = {}
+	local raw = (player:GetAttribute(name) :: string?) or ""
+	for id in raw:gmatch("[^,]+") do
+		set[id] = true
+	end
+	return set
+end
+
+local function textLabel(parent: Instance, size: UDim2, pos: UDim2, color: Color3): TextLabel
+	local t = Instance.new("TextLabel")
+	t.Size = size
+	t.Position = pos
+	t.BackgroundTransparency = 1
+	t.Font = FONT
+	t.TextScaled = true
+	t.TextColor3 = color
+	t.Parent = parent
+	return t
+end
+
+local function button(parent: Instance, text: string, color: Color3, size: UDim2): TextButton
+	local b = Instance.new("TextButton")
+	b.Size = size
+	b.BackgroundColor3 = color
+	b.Font = FONT
+	b.TextScaled = true
+	b.TextColor3 = INK
+	b.Text = text
+	corner(b, 12)
+	stroke(b)
+	local pad = Instance.new("UIPadding")
+	pad.PaddingLeft = UDim.new(0, 8)
+	pad.PaddingRight = UDim.new(0, 8)
+	pad.PaddingTop = UDim.new(0, 6)
+	pad.PaddingBottom = UDim.new(0, 6)
+	pad.Parent = b
+	b.Parent = parent
+	return b
+end
+
+local screen = Instance.new("ScreenGui")
+screen.Name = "RefugeUI"
+screen.ResetOnSpawn = false
+
+---------------------------------------------------------------------
+-- Haut : cœurs et production
+---------------------------------------------------------------------
+local top = Instance.new("Frame")
+top.Size = UDim2.fromOffset(330, 58)
+top.AnchorPoint = Vector2.new(0.5, 0)
+top.Position = UDim2.new(0.5, 0, 0, 10)
+top.BackgroundColor3 = CREAM
+corner(top, 14)
+stroke(top)
+top.Parent = screen
+local heartsLabel = textLabel(top, UDim2.new(0.55, -8, 1, -14), UDim2.fromOffset(8, 7), PINK)
+local hpsLabel = textLabel(top, UDim2.new(0.45, -8, 1, -18), UDim2.new(0.55, 0, 0, 9), INK)
+
+-- Guide des premières minutes
+local guide = textLabel(screen, UDim2.fromOffset(420, 36), UDim2.new(0.5, 0, 0, 74), Color3.new(1, 1, 1))
+guide.AnchorPoint = Vector2.new(0.5, 0)
+guide.BackgroundColor3 = INK
+guide.BackgroundTransparency = 0.2
+corner(guide, 10)
+
+---------------------------------------------------------------------
+-- Bas : panier, amélioration, bestiaire
+---------------------------------------------------------------------
+local bar = Instance.new("Frame")
+bar.Size = UDim2.new(0, 0, 0, 56)
+bar.AutomaticSize = Enum.AutomaticSize.X
+bar.AnchorPoint = Vector2.new(0.5, 1)
+bar.Position = UDim2.new(0.5, 0, 1, -14)
+bar.BackgroundTransparency = 1
+bar.Parent = screen
+local layout = Instance.new("UIListLayout")
+layout.FillDirection = Enum.FillDirection.Horizontal
+layout.Padding = UDim.new(0, 8)
+layout.Parent = bar
+
+local basket = button(bar, "", CREAM, UDim2.fromOffset(140, 56))
+basket.AutoButtonColor = false
+local netButton = button(bar, "", CREAM, UDim2.fromOffset(210, 56))
+local bookButton = button(bar, "📖 Bestiaire", CREAM, UDim2.fromOffset(150, 56))
+
+netButton.Activated:Connect(function()
+	UpgradeNet:FireServer()
+end)
+
+-- Bestiaire
+local book = Instance.new("Frame")
+book.Size = UDim2.fromOffset(460, 300)
+book.AnchorPoint = Vector2.new(0.5, 0.5)
+book.Position = UDim2.fromScale(0.5, 0.5)
+book.BackgroundColor3 = CREAM
+book.Visible = false
+corner(book, 16)
+stroke(book)
+book.Parent = screen
+local bookTitle = textLabel(book, UDim2.new(1, -20, 0, 36), UDim2.fromOffset(10, 8), INK)
+local grid = Instance.new("Frame")
+grid.Size = UDim2.new(1, -20, 1, -56)
+grid.Position = UDim2.fromOffset(10, 48)
+grid.BackgroundTransparency = 1
+grid.Parent = book
+local gridLayout = Instance.new("UIGridLayout")
+gridLayout.CellSize = UDim2.fromOffset(140, 74)
+gridLayout.CellPadding = UDim2.fromOffset(8, 8)
+gridLayout.Parent = grid
+
+type Card = { frame: Frame, dot: Frame, name: TextLabel, info: TextLabel }
+local cards: { [string]: Card } = {}
+for _, s in Config.Species do
+	local f = Instance.new("Frame")
+	f.BackgroundColor3 = Color3.new(1, 1, 1)
+	corner(f, 10)
+	f.Parent = grid
+	local dot = Instance.new("Frame")
+	dot.Size = UDim2.fromOffset(30, 30)
+	dot.Position = UDim2.fromOffset(8, 8)
+	corner(dot, 15)
+	dot.Parent = f
+	local name = textLabel(f, UDim2.new(1, -50, 0, 30), UDim2.fromOffset(44, 8), INK)
+	name.TextXAlignment = Enum.TextXAlignment.Left
+	local info = textLabel(f, UDim2.new(1, -16, 0, 24), UDim2.fromOffset(8, 44), INK)
+	info.Font = Enum.Font.GothamBold
+	cards[s.id] = { frame = f, dot = dot, name = name, info = info }
+end
+
+bookButton.Activated:Connect(function()
+	book.Visible = not book.Visible
+end)
+
+---------------------------------------------------------------------
+-- Rafraîchissement
+---------------------------------------------------------------------
+local function refreshBook()
+	local found = csv("Discovered")
+	local count = 0
+	for _, s in Config.Species do
+		local c = cards[s.id]
+		local zone = Config.GetZone(s.zone)
+		if found[s.id] then
+			count += 1
+			c.dot.BackgroundColor3 = s.color
+			c.name.Text = s.name
+			c.info.Text = s.rarity .. " · +" .. s.hps .. " ❤/s"
+			c.info.TextColor3 = Config.RarityColors[s.rarity]:Lerp(INK, 0.35)
+		else
+			c.dot.BackgroundColor3 = Color3.fromRGB(200, 200, 200)
+			c.name.Text = "???"
+			c.info.Text = s.rarity .. " · " .. (if zone then zone.name else "")
+			c.info.TextColor3 = Color3.fromRGB(150, 150, 150)
+		end
+	end
+	bookTitle.Text = "📖 Bestiaire : " .. count .. " / " .. #Config.Species
+end
+
+local function refresh()
+	local hearts = attr("Hearts")
+	local net = attr("Net")
+	heartsLabel.Text = "❤ " .. formatNumber(hearts)
+	hpsLabel.Text = "+" .. formatNumber(attr("HPS")) .. " ❤/s"
+	basket.Text = "🧺 " .. attr("Carried") .. " / " .. attr("Capacity")
+	basket.BackgroundColor3 = if attr("Carried") >= attr("Capacity") then Color3.fromRGB(255, 200, 200) else CREAM
+	if net >= Config.NetMaxLevel then
+		netButton.Text = "🧺 Panier MAX"
+		netButton.BackgroundColor3 = CREAM
+	else
+		local price = Config.NetPrice(net)
+		netButton.Text = "🧺 +1 place : " .. formatNumber(price) .. " ❤"
+		netButton.BackgroundColor3 = if hearts >= price then Color3.fromRGB(200, 245, 180) else CREAM
+	end
+
+	-- Guide
+	local carriedCount = attr("Carried")
+	local pens = attr("PenCount")
+	local zones = csv("Zones")
+	if pens == 0 and carriedCount == 0 then
+		guide.Text = "1. Va dans la prairie 🌼 et recueille une bestiole (touche E)"
+	elseif carriedCount > 0 then
+		guide.Text = "2. Suis le fil rose jusqu'à l'Accueil de ton refuge 🧺"
+	elseif hearts < 50 and attr("Box") > 0 then
+		guide.Text = "3. Collecte les cœurs dans la boîte rose ❤"
+	elseif not zones["foret"] then
+		guide.Text = "Agrandis ton refuge, puis ouvre la Forêt 🌲 (2 500 ❤)"
+	elseif not zones["montagne"] then
+		guide.Text = "Prochain objectif : la Montagne 🏔️ (50 000 ❤)"
+	else
+		guide.Text = "Complète ton bestiaire 📖 et trouve le Dragonnet-nuage !"
+	end
+end
+
+for _, name in { "Hearts", "HPS", "Net", "Capacity", "Carried", "PenCount", "Zones", "Box" } do
+	player:GetAttributeChangedSignal(name):Connect(refresh)
+end
+player:GetAttributeChangedSignal("Discovered"):Connect(refreshBook)
+refresh()
+refreshBook()
+
+---------------------------------------------------------------------
+-- Portails : un portail ouvert devient traversable pour ce joueur seulement
+---------------------------------------------------------------------
+local function refreshGates()
+	local zones = csv("Zones")
+	local folder = workspace:FindFirstChild("Monde")
+	local gates = folder and folder:FindFirstChild("Portails")
+	if not gates then
+		return
+	end
+	for _, gate in gates:GetChildren() do
+		if gate:IsA("BasePart") then
+			local open = zones[gate.Name] == true
+			gate.CanCollide = not open
+			gate.Transparency = if open then 0.85 else 0.3
+		end
+	end
+end
+player:GetAttributeChangedSignal("Zones"):Connect(refreshGates)
+task.spawn(function()
+	local monde = workspace:WaitForChild("Monde", 20)
+	if monde then
+		monde:WaitForChild("Portails", 20)
+		refreshGates()
+	end
+end)
+
+---------------------------------------------------------------------
+-- Fil lumineux vers l'accueil quand le panier n'est pas vide
+---------------------------------------------------------------------
+local beam = Instance.new("Beam")
+beam.Color = ColorSequence.new(PINK)
+beam.Width0 = 0.6
+beam.Width1 = 0.6
+beam.FaceCamera = true
+beam.LightEmission = 0.6
+beam.TextureSpeed = 1
+beam.Enabled = false
+
+local function updateBeam()
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	local refuges = workspace:FindFirstChild("Refuges")
+	local plot = refuges and refuges:FindFirstChild("Refuge" .. attr("PlotIndex"))
+	local accueil = plot and plot:FindFirstChild("Accueil")
+	if not root or not accueil or attr("Carried") == 0 then
+		beam.Enabled = false
+		return
+	end
+	local a0 = root:FindFirstChild("FilA0") :: Attachment?
+	if not a0 then
+		local new = Instance.new("Attachment")
+		new.Name = "FilA0"
+		new.Parent = root
+		a0 = new
+	end
+	local a1 = accueil:FindFirstChild("FilA1") :: Attachment?
+	if not a1 then
+		local new = Instance.new("Attachment")
+		new.Name = "FilA1"
+		new.Position = Vector3.new(0, 2, 0)
+		new.Parent = accueil
+		a1 = new
+	end
+	beam.Attachment0 = a0
+	beam.Attachment1 = a1
+	beam.Parent = accueil
+	beam.Enabled = true
+end
+player:GetAttributeChangedSignal("Carried"):Connect(updateBeam)
+player.CharacterAdded:Connect(function()
+	task.wait(0.5)
+	updateBeam()
+end)
+
+---------------------------------------------------------------------
+-- Les pensionnaires sautillent dans leur enclos (effet local)
+---------------------------------------------------------------------
+RunService.RenderStepped:Connect(function()
+	local t = os.clock()
+	for _, body in CollectionService:GetTagged("Pensionnaire") do
+		if body:IsA("BasePart") then
+			local base = body:GetAttribute("BaseCFrame")
+			if typeof(base) == "CFrame" then
+				local phase = (body.Position.X + body.Position.Z) * 0.37
+				local hop = math.abs(math.sin(t * 3 + phase)) * 0.8
+				body.CFrame = base * CFrame.new(0, hop, 0) * CFrame.Angles(0, math.sin(t + phase) * 0.6, 0)
+			end
+		end
+	end
+end)
+
+---------------------------------------------------------------------
+-- Boutique (seulement si des ID sont configurés)
+---------------------------------------------------------------------
+type ShopItem = { label: string, buy: () -> () }
+local shopItems: { ShopItem } = {}
+if Config.GamePasses.DoubleHearts ~= 0 then
+	table.insert(shopItems, {
+		label = "💞 Cœurs x2",
+		buy = function()
+			MarketplaceService:PromptGamePassPurchase(player, Config.GamePasses.DoubleHearts)
+		end,
+	})
+end
+if Config.GamePasses.BigBasket ~= 0 then
+	table.insert(shopItems, {
+		label = "🧺 Grand panier",
+		buy = function()
+			MarketplaceService:PromptGamePassPurchase(player, Config.GamePasses.BigBasket)
+		end,
+	})
+end
+for productId, text in Config.DevProductLabels do
+	table.insert(shopItems, {
+		label = text,
+		buy = function()
+			MarketplaceService:PromptProductPurchase(player, productId)
+		end,
+	})
+end
+
+if #shopItems > 0 then
+	local shopButton = button(screen, "🛒 Boutique", Color3.fromRGB(255, 210, 90), UDim2.fromOffset(130, 48))
+	shopButton.Position = UDim2.new(1, -142, 0, 12)
+	local panel = Instance.new("Frame")
+	panel.Size = UDim2.fromOffset(220, 0)
+	panel.AutomaticSize = Enum.AutomaticSize.Y
+	panel.Position = UDim2.new(1, -232, 0, 68)
+	panel.BackgroundColor3 = CREAM
+	panel.Visible = false
+	corner(panel, 12)
+	stroke(panel)
+	panel.Parent = screen
+	local list = Instance.new("UIListLayout")
+	list.Padding = UDim.new(0, 6)
+	list.Parent = panel
+	local panelPad = Instance.new("UIPadding")
+	for _, side in { "PaddingTop", "PaddingBottom", "PaddingLeft", "PaddingRight" } do
+		(panelPad :: any)[side] = UDim.new(0, 8)
+	end
+	panelPad.Parent = panel
+	for _, item in shopItems do
+		local b = button(panel, item.label, PINK, UDim2.new(1, 0, 0, 44))
+		b.TextColor3 = Color3.new(1, 1, 1)
+		b.Activated:Connect(item.buy)
+	end
+	shopButton.Activated:Connect(function()
+		panel.Visible = not panel.Visible
+	end)
+end
+
+---------------------------------------------------------------------
+-- Notifications
+---------------------------------------------------------------------
+local toast = textLabel(screen, UDim2.fromOffset(460, 44), UDim2.new(0.5, 0, 0, 116), Color3.new(1, 1, 1))
+toast.AnchorPoint = Vector2.new(0.5, 0)
+toast.BackgroundColor3 = PINK
+toast.BackgroundTransparency = 0.1
+toast.Visible = false
+corner(toast, 10)
+
+local toastToken = 0
+Notify.OnClientEvent:Connect(function(text: string)
+	toastToken += 1
+	local token = toastToken
+	toast.Text = text
+	toast.Visible = true
+	task.delay(2.6, function()
+		if token == toastToken then
+			toast.Visible = false
+		end
+	end)
+end)
+
+Discovered.OnClientEvent:Connect(function(id: string)
+	local s = Config.GetSpecies(id)
+	if not s then
+		return
+	end
+	local big = textLabel(screen, UDim2.fromOffset(240, 40), UDim2.fromScale(0.5, 0.35), Config.RarityColors[s.rarity])
+	big.AnchorPoint = Vector2.new(0.5, 0.5)
+	big.TextStrokeTransparency = 0
+	big.TextStrokeColor3 = INK
+	big.Text = "📖 " .. s.name .. " !"
+	TweenService:Create(big, TweenInfo.new(0.35, Enum.EasingStyle.Back), { Size = UDim2.fromOffset(520, 86) }):Play()
+	task.delay(1.4, function()
+		local fade = TweenService:Create(big, TweenInfo.new(0.4), { TextTransparency = 1, TextStrokeTransparency = 1 })
+		fade:Play()
+		fade.Completed:Connect(function()
+			big:Destroy()
+		end)
+	end)
+end)
+
+screen.Parent = player:WaitForChild("PlayerGui")
+]]></string>
+        </Properties>
+      </Item>
+    </Item>
+  </Item>
+  <Item class="Workspace" referent="9">
+    <Properties>
+      <string name="Name">Workspace</string>
+      <bool name="FilteringEnabled">true</bool>
+      <bool name="NeedsPivotMigration">false</bool>
+    </Properties>
+    <Item class="SpawnLocation" referent="10">
+      <Properties>
+        <string name="Name">SpawnLocation</string>
+        <bool name="Anchored">true</bool>
+        <bool name="CanCollide">true</bool>
+        <int name="Duration">0</int>
+        <Vector3 name="Position">
+          <X>0</X>
+          <Y>0.5</Y>
+          <Z>0</Z>
+        </Vector3>
+        <Vector3 name="size">
+          <X>12</X>
+          <Y>1</Y>
+          <Z>12</Z>
+        </Vector3>
+        <float name="Transparency">1</float>
+      </Properties>
+    </Item>
+  </Item>
+</roblox>
