@@ -205,6 +205,7 @@ type PlayerData = {
 	discovered: { string },
 	adopted: number,
 	receipts: { string },
+	basket: { string }, -- bestioles dans le panier (sauvegardées aussi)
 }
 
 local store: DataStore? = nil
@@ -234,6 +235,7 @@ local function defaultData(): PlayerData
 		discovered = {},
 		adopted = 0,
 		receipts = {},
+		basket = {},
 	}
 end
 
@@ -281,6 +283,7 @@ local function sanitize(raw: any): PlayerData
 	if not table.find(data.zones, "prairie") then
 		table.insert(data.zones, 1, "prairie")
 	end
+	data.basket = idList(raw.basket, isSpecies, Config.NetCapacity(Config.NetMaxLevel) + Config.BigBasketBonus, false)
 	data.receipts = idList(raw.receipts, function()
 		return true
 	end, 50, true)
@@ -293,6 +296,7 @@ local function snapshot(data: PlayerData): PlayerData
 	copy.zones = table.clone(data.zones)
 	copy.discovered = table.clone(data.discovered)
 	copy.receipts = table.clone(data.receipts)
+	copy.basket = table.clone(data.basket)
 	return copy
 end
 
@@ -323,6 +327,7 @@ local function saveData(player: Player): boolean
 	local copy = snapshot(data)
 	-- les cœurs encore dans la boîte sont sauvegardés avec le reste
 	copy.hearts += math.floor(boxHearts[player] or 0)
+	copy.basket = table.clone(carried[player] or {})
 	local ok, err = pcall(function()
 		(store :: DataStore):UpdateAsync("player_" .. player.UserId, function()
 			return copy
@@ -1144,7 +1149,7 @@ local function onPlayerAdded(player: Player)
 		return
 	end
 	sessionData[player] = data
-	carried[player] = {}
+	carried[player] = table.clone(data.basket) -- le panier est retrouvé à la reconnexion
 	boxHearts[player] = 0
 	syncPlayer(player)
 	task.spawn(refreshPasses, player)

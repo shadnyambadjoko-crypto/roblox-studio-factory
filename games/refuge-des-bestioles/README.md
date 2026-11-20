@@ -28,6 +28,6 @@ Différence avec la vague « Steal a … » : ici on **recueille et on protège*
 - Note qualité provisoire : **73/100** (voir rapport du 20/11) → sous le seuil de 80.
 
 ## Limites connues
-- Le contenu du panier n'est pas sauvegardé si on quitte (les bestioles installées le sont).
+- ~~Panier non sauvegardé~~ : corrigé le 20/11 au soir (le panier est retrouvé à la reconnexion).
 - Bestioles en formes simples (boules) : un vrai modèle par espèce ferait monter la note de direction artistique.
 - Pas encore de sons ni de quêtes quotidiennes.
