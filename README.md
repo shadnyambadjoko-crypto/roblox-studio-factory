@@ -11,6 +11,8 @@ Le studio de jeux Roblox de Shad, piloté par un agent IA « directeur de studio
 | Jeu | Genre | Testé dans Studio | Publié |
 |---|---|---|---|
 | [Potager Tycoon](games/potager-tycoon) | Tycoon cosy | ✅ 20/11/2026 | Non |
+| [Tour des Nuages +1](games/tour-des-nuages) | Obby incrémental « +1 » | ❌ (Mac verrouillé le 20/11) | Non |
+| [Refuge des Bestioles](games/refuge-des-bestioles) | Tycoon de collection cosy | ❌ (Mac verrouillé le 20/11) | Non |
 
 ## Règles d'or
 2 prototypes par jour = objectif de production, **pas** 2 publications. Rien n'est publié (Roblox, réseaux sociaux) et aucun euro n'est dépensé sans le feu vert de Shad.
